@@ -4,7 +4,7 @@
 These python scripts merge physiological data collected from BIOPAC and mDAQ devices by synchronizing them based on timestamps. They help prepare your data for analysis by:
 - Combining data from both devices into aligned timelines
 - Matching event labels with the corresponding physiological measurements
-- Handling different sampling rates (BIOPAC: 250 Hz, mDAQ: 128 Hz and 1 Hz)
+- Handling different sampling rates (BIOPAC: 250/1000 Hz, mDAQ: 128 Hz and 1 Hz)
 - Generating analysis-ready CSV files
 
 ## Two Approaches Available

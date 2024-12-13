@@ -161,7 +161,163 @@ def process_labels(label_file, time_offset=0):
     logging.info(f'Labels processed: {len(labels)}')
     return labels, metadata
 
+# def process_biopac(biopac_file):
+#     biopac_data = {}
+#     logging.info('Starting BIOPAC data processing.')
+#     start_time = time.time()
+
+#     with open(biopac_file, 'r') as f:
+#         lines = f.readlines()
+
+#     time_str = lines[2].split(': ')[1].strip()
+#     try:
+#         start_datetime = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S.%f")
+#     except ValueError:
+#         start_datetime = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
+#     start_time_ms = int(start_datetime.timestamp() * 1000)
+
+#     # Process data
+#     for line in tqdm(lines[15:], desc="Processing BIOPAC data", unit="line"):
+#         try:
+#             values = line.strip().split(',')
+#             elapsed_s = float(values[0])
+#             timestamp_ms = start_time_ms + int(elapsed_s * 1000)
+#             biopac_data[timestamp_ms] = values[1:5]
+#         except (ValueError, IndexError):
+#             continue
+
+#     processing_time = time.time() - start_time
+#     logging.info(f'Finished BIOPAC data processing. Time taken: {processing_time:.2f} seconds.')
+#     logging.info(f'BIOPAC samples: {len(biopac_data)}')
+#     return start_time_ms, max(biopac_data.keys()), biopac_data
+
+# def process_biopac(biopac_file):
+#     """
+#     Process BIOPAC file with dynamic sample rate detection and channel mappings.
+#     Returns timestamps and data in the order: ECG, PPG, SKT, EDA
+#     """
+#     biopac_data = {}
+#     logging.info('Starting BIOPAC data processing.')
+#     start_time = time.time()
+
+#     with open(biopac_file, 'r') as f:
+#         lines = f.readlines()
+
+#     # Get sample rate from file
+#     sample_rate_line = next((line for line in lines if "msec/sample" in line), None)
+#     if not sample_rate_line:
+#         raise ValueError("Could not find sample rate (msec/sample) in file header")
+    
+#     try:
+#         sample_rate_ms = float(sample_rate_line.split()[0])
+#         logging.info(f"Detected sample rate: {sample_rate_ms} msec/sample")
+#     except (ValueError, IndexError) as e:
+#         raise ValueError(f"Failed to parse sample rate from line: {sample_rate_line}") from e
+
+#     # Find recording timestamp
+#     recording_line = next((line for line in lines if line.startswith('Recording on:')), None)
+#     if not recording_line:
+#         raise ValueError("Could not find 'Recording on:' timestamp in file")
+
+#     time_str = recording_line.split(': ')[1].strip()
+#     try:
+#         start_datetime = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S.%f")
+#     except ValueError:
+#         start_datetime = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
+#     start_time_ms = int(start_datetime.timestamp() * 1000)
+
+#     # Find and map channels
+#     channel_info = {
+#         'ECG': {'keywords': ['ECG'], 'position': None},
+#         'PPG': {'keywords': ['PPG'], 'position': None},
+#         'SKT': {'keywords': ['SKT'], 'position': None},
+#         'EDA': {'keywords': ['EDA'], 'position': None}
+#     }
+
+#     # Find data header line and map channels
+#     data_start_idx = None
+#     channel_positions = {}
+    
+#     for idx, line in enumerate(lines):
+#         # Check for channel names
+#         line_lower = line.lower()
+#         for channel, info in channel_info.items():
+#             if any(keyword.lower() in line_lower for keyword in info['keywords']):
+#                 logging.info(f"Found {channel} channel description")
+                
+#         # Find the header line with CH numbers
+#         if line.startswith('sec,CH'):
+#             data_start_idx = idx
+#             headers = line.strip().split(',')
+            
+#             # Get previous 4 lines for channel order
+#             channel_names = [lines[idx-4].strip(), lines[idx-3].strip(), 
+#                            lines[idx-2].strip(), lines[idx-1].strip()]
+            
+#             # Map headers to channel types
+#             for i, channel_name in enumerate(channel_names):
+#                 channel_idx = i + 1  # Skip the 'sec' column
+#                 if channel_idx < len(headers):
+#                     if 'ECG' in channel_name:
+#                         channel_positions['ECG'] = channel_idx
+#                     elif 'PPG' in channel_name:
+#                         channel_positions['PPG'] = channel_idx
+#                     elif 'SKT' in channel_name:
+#                         channel_positions['SKT'] = channel_idx
+#                     elif 'EDA' in channel_name:
+#                         channel_positions['EDA'] = channel_idx
+
+#             break
+
+#     if not data_start_idx:
+#         raise ValueError("Could not find data section in file")
+
+#     if len(channel_positions) != 4:
+#         logging.warning(f"Not all channels found. Found positions: {channel_positions}")
+
+#     # Skip the samples count line
+#     data_start_idx += 2
+
+#     # Process data
+#     for line in tqdm(lines[data_start_idx:], desc="Processing BIOPAC data", unit="line"):
+#         try:
+#             values = line.strip().split(',')
+#             if not values[0] or values[0] == '':
+#                 continue
+                
+#             elapsed_s = float(values[0])
+#             # Calculate timestamp using file's sample rate
+#             timestamp_ms = start_time_ms + int(elapsed_s * 1000)
+            
+#             # Extract values in standard order: ECG, PPG, SKT, EDA
+#             extracted_values = []
+#             for channel in ['ECG', 'PPG', 'SKT', 'EDA']:
+#                 if channel in channel_positions:
+#                     pos = channel_positions[channel]
+#                     extracted_values.append(values[pos])
+#                 else:
+#                     extracted_values.append('')
+                    
+#             biopac_data[timestamp_ms] = extracted_values
+
+#         except (ValueError, IndexError) as e:
+#             logging.warning(f"Error processing line: {line.strip()}. Error: {str(e)}")
+#             continue
+
+#     processing_time = time.time() - start_time
+#     logging.info(f'Finished BIOPAC data processing.')
+#     logging.info(f'Sample rate used: {sample_rate_ms} msec/sample')
+#     logging.info(f'Processing time: {processing_time:.2f} seconds')
+#     logging.info(f'BIOPAC samples processed: {len(biopac_data)}')
+#     logging.info(f'Channel mapping used: {channel_positions}')
+    
+#     return start_time_ms, max(biopac_data.keys()) if biopac_data else start_time_ms, biopac_data
+
 def process_biopac(biopac_file):
+    """
+    Process BIOPAC file with dynamic sample rate detection and channel mappings.
+    Returns timestamps and data in the order: ECG, PPG, SKT, EDA
+    """
     biopac_data = {}
     logging.info('Starting BIOPAC data processing.')
     start_time = time.time()
@@ -169,27 +325,117 @@ def process_biopac(biopac_file):
     with open(biopac_file, 'r') as f:
         lines = f.readlines()
 
-    time_str = lines[2].split(': ')[1].strip()
+    # Get sample rate from file
+    sample_rate_line = next((line for line in lines if "msec/sample" in line), None)
+    if not sample_rate_line:
+        raise ValueError("Could not find sample rate (msec/sample) in file header")
+    
+    try:
+        sample_rate_ms = float(sample_rate_line.split()[0])
+        logging.info(f"Detected sample rate: {sample_rate_ms} msec/sample")
+    except (ValueError, IndexError) as e:
+        raise ValueError(f"Failed to parse sample rate from line: {sample_rate_line}") from e
+
+    # Find recording timestamp
+    recording_line = next((line for line in lines if line.startswith('Recording on:')), None)
+    if not recording_line:
+        raise ValueError("Could not find 'Recording on:' timestamp in file")
+
+    time_str = recording_line.split(': ')[1].strip()
     try:
         start_datetime = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S.%f")
     except ValueError:
         start_datetime = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
     start_time_ms = int(start_datetime.timestamp() * 1000)
 
+    # Find and map channels
+    channel_info = {
+        'ECG': {'keywords': ['ECG'], 'position': None},
+        'PPG': {'keywords': ['PPG'], 'position': None},
+        'SKT': {'keywords': ['SKT'], 'position': None},
+        'EDA': {'keywords': ['EDA'], 'position': None}
+    }
+
+    # Find data header line and map channels
+    data_start_idx = None
+    channel_positions = {}
+    
+    for idx, line in enumerate(lines):
+        # Check for channel names
+        line_lower = line.lower()
+        for channel, info in channel_info.items():
+            if any(keyword.lower() in line_lower for keyword in info['keywords']):
+                logging.info(f"Found {channel} channel description")
+                
+        # Find the header line with CH numbers
+        if line.startswith('sec,CH'):
+            data_start_idx = idx
+            headers = line.strip().split(',')
+            
+            # Get previous 4 lines for channel order
+            channel_names = [lines[idx-4].strip(), lines[idx-3].strip(), 
+                           lines[idx-2].strip(), lines[idx-1].strip()]
+            
+            # Map headers to channel types
+            for i, channel_name in enumerate(channel_names):
+                channel_idx = i + 1  # Skip the 'sec' column
+                if channel_idx < len(headers):
+                    if 'ECG' in channel_name:
+                        channel_positions['ECG'] = channel_idx
+                    elif 'PPG' in channel_name:
+                        channel_positions['PPG'] = channel_idx
+                    elif 'SKT' in channel_name:
+                        channel_positions['SKT'] = channel_idx
+                    elif 'EDA' in channel_name:
+                        channel_positions['EDA'] = channel_idx
+
+            break
+
+    if not data_start_idx:
+        raise ValueError("Could not find data section in file")
+
+    if len(channel_positions) != 4:
+        logging.warning(f"Not all channels found. Found positions: {channel_positions}")
+
+    # Skip the samples count line
+    data_start_idx += 2
+
     # Process data
-    for line in tqdm(lines[15:], desc="Processing BIOPAC data", unit="line"):
+    for line in tqdm(lines[data_start_idx:], desc="Processing BIOPAC data", unit="line"):
         try:
             values = line.strip().split(',')
+            if not values[0] or values[0] == '':
+                continue
+                
             elapsed_s = float(values[0])
+            # Calculate timestamp using file's sample rate
             timestamp_ms = start_time_ms + int(elapsed_s * 1000)
-            biopac_data[timestamp_ms] = values[1:5]
-        except (ValueError, IndexError):
+            
+            # Extract values in standard order: ECG, PPG, SKT, EDA
+            extracted_values = []
+            for channel in ['ECG', 'PPG', 'SKT', 'EDA']:
+                if channel in channel_positions:
+                    pos = channel_positions[channel]
+                    extracted_values.append(values[pos])
+                else:
+                    extracted_values.append('')
+                    
+            biopac_data[timestamp_ms] = extracted_values
+
+        except (ValueError, IndexError) as e:
+            logging.warning(f"Error processing line: {line.strip()}. Error: {str(e)}")
             continue
 
     processing_time = time.time() - start_time
-    logging.info(f'Finished BIOPAC data processing. Time taken: {processing_time:.2f} seconds.')
-    logging.info(f'BIOPAC samples: {len(biopac_data)}')
-    return start_time_ms, max(biopac_data.keys()), biopac_data
+    logging.info(f'Finished BIOPAC data processing.')
+    logging.info(f'Sample rate used: {sample_rate_ms} msec/sample')
+    logging.info(f'Processing time: {processing_time:.2f} seconds')
+    logging.info(f'BIOPAC samples processed: {len(biopac_data)}')
+    logging.info(f'Channel mapping used: {channel_positions}')
+    
+    return start_time_ms, max(biopac_data.keys()) if biopac_data else start_time_ms, biopac_data
+
+
 
 def process_mdaq(mdaq_folder, start_time_ms):
     mdaq_data = {}
