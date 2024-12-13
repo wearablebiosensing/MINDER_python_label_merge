@@ -1,106 +1,163 @@
-# MINDER_mDAQ_BIOPAC_label_merge
-## mDAQ and BIOPAC Data Merge Scripts
+# MINDER_MDAQ_BIOPAC_LABEL_MERGE
 
-These python scripts merge physiological data collected from BIOPAC and mDAQ devices by synchronizing them based on timestamps. They help prepare your data for analysis by:
-- Combining data from both devices into aligned timelines
-- Matching event labels with the corresponding physiological measurements
-- Handling different sampling rates (BIOPAC: 250/1000 Hz, mDAQ: 128 Hz and 1 Hz)
-- Generating analysis-ready CSV files
+A Python-based toolset for processing and visualizing physiological data from BIOPAC and mDAQ devices. This repository contains three main components:
 
-## Two Approaches Available
+1. BIOPAC Label Merger
+2. BIOPAC-mDAQ Data Synchronizer
+3. Interactive Data Visualizer
 
-### 1. Millisecond-by-Millisecond (merge_mDAQ_BIOPAC_approach1ms.py)
-- Creates a complete timeline with every millisecond between start and end times
-- Places each data point at its exact timestamp
-- Leaves gaps between samples to maintain original sampling rates
-- Best when you need precise temporal relationships between signals
-- Generates an additional merged_data.csv with combined device data
+## Repository Structure
 
-### 2. Nearest Timestamp (merge_mDAQ_BIOPAC_nearest_ms.py)
-- Matches data points and labels to their nearest available timestamp
-- Uses a 1-second window for matching
-- More efficient with memory and processing time
-- Better for large datasets where exact millisecond precision isn't critical
-- Provides statistics about timing matches
+```
+MINDER_MDAQ_BIOPAC_LABEL_MERGE/
+├── .gitattributes
+├── BIOPAC_label_merge.py
+├── merge_mDAQ_BIOPAC_nearest_ms.py
+├── mDAQ_BIOPAC_data_visualizer.py
+├── LICENSE
+└── README.md
+```
+
+## Components
+
+### 1. BIOPAC_label_merge.py
+
+A Python script for merging BIOPAC physiological data with event labels.
+
+**Features:**
+- Processes BIOPAC files containing ECG, PPG, SKT, and EDA data
+- Matches timestamps with event labels using nearest-neighbor approach
+- Generates labeled output with detailed matching information
+- Memory-efficient processing for large datasets
+
+### 2. merge_mDAQ_BIOPAC_nearest_ms.py
+
+Combines data from both BIOPAC and mDAQ devices with event labels.
+
+**Features:**
+- Synchronizes multi-device data based on timestamps
+- Handles different sampling rates between devices
+- Processes multiple data channels:
+  - BIOPAC: ECG, PPG, SKT, EDA
+  - mDAQ: ECG, EDA, IR/Red PPG, accelerometer, gyroscope, temperature, humidity
+- Generates separate labeled files for each device
+
+### 3. mDAQ_BIOPAC_data_visualizer.py
+
+A PyQt5-based GUI application for visualizing synchronized physiological data.
+
+**Features:**
+- Real-time data visualization
+- Customizable display options:
+  - Adjustable time window
+  - Channel selection
+  - Color schemes
+  - Grid and background settings
+- Label visualization with configurable:
+  - Marker styles
+  - Text positions
+  - Line types
+- Linked timeline across all channels
 
 ## Prerequisites
 
-1. Python 3.x with packages:
-```bash
-pip install tqdm psutil
-```
+- Python 3.8+
+- Required Python packages:
+  ```
+  pandas
+  numpy
+  PyQt5
+  pyqtgraph
+  tqdm
+  ```
 
-2. Required files:
-- BIOPAC data file (.txt)
-  - Contains: ECG, PPG, SKT, EDA
-  - Has header with recording time
-- mDAQ folder with .csv files
-  - Contains: ECG, EDA, PPG (IR/Red), accelerometer, gyroscope, temperature, humidity
-  - Files should be numbered (e.g., 1.csv, 2.csv)
-- Label file (.csv)
-  - Required columns: timestamp, label
-  - Optional: device, session, subject, trial
+## File Requirements
+
+### BIOPAC Files (.txt)
+- Must contain header with recording time
+- Required channels: ECG, PPG, SKT, EDA
+- Sample rate information in msec/sample format
+
+### mDAQ Files (.csv)
+- Numbered CSV files (e.g., 1.csv, 2.csv)
+- Contains physiological and environmental data
+- Standard mDAQ data format with ISI values
+
+### Label Files (.csv)
+Required columns:
+- timestamp_ms: Event timestamps in milliseconds
+- label: Event markers/labels
+
+Optional metadata columns:
+- device
+- session
+- subject
+- trial
 
 ## Usage
 
-1. Run either script:
-```bash
-python merge_mDAQ_BIOPAC_approach1ms.py
-# OR
+### BIOPAC Label Merger
+```python
+python BIOPAC_label_merge.py
+```
+1. Select BIOPAC .txt file
+2. Select label .csv file
+3. Choose output directory
+
+### BIOPAC-mDAQ Synchronizer
+```python
 python merge_mDAQ_BIOPAC_nearest_ms.py
 ```
+1. Select BIOPAC .txt file
+2. Select mDAQ folder containing .csv files
+3. Select label .csv file
+4. Choose output directory
 
-2. Use the pop-up windows to select:
-- BIOPAC file (.txt)
-- Label file (.csv)
-- mDAQ folder
-- Output folder
-
-3. Wait for processing to complete
-- Progress bars will show status
-- Success message will display output location
+### Data Visualizer
+```python
+python mDAQ_BIOPAC_data_visualizer.py
+```
+1. Launch the GUI application
+2. Load BIOPAC and/or mDAQ files using the interface
+3. Adjust visualization settings as needed
 
 ## Output Files
 
-Both scripts create:
+The processing scripts generate:
+
 1. `biopac_labels.csv`
    - BIOPAC data with matched labels
    - Columns: timestamp_ms, ECG, PPG, SKT, EDA, label
 
-2. `mdaq_labels.csv`
+2. `mdaq_labels.csv` (if using synchronizer)
    - mDAQ data with matched labels
-   - Columns: timestamp_ms, ecg, eda, ir, red, acc_x/y/z, gyr_x/y/z, environmental data, label
+   - All mDAQ channels with matched labels
 
 3. `label_assignments.csv`
-   - Shows how labels were matched to data points
-   - Includes row numbers for easy reference
+   - Label matching details
+   - Includes original timestamps and matching information
 
 4. `performance_metrics.txt`
-   - Processing time and memory usage
-   - Data point counts
-   - Label matching statistics
-
-Additional output for Approach 1:
-- `merged_data.csv`: Combined data from both devices for each millisecond
+   - Processing statistics
+   - Data points processed
+   - Memory usage
+   - Processing time
 
 ## Common Issues
 
-1. File Selection Errors
-   - Ensure BIOPAC file is .txt format
-   - mDAQ folder should contain numbered .csv files
-   - Label file should be .csv format
+### Data Processing
+- Ensure consistent timestamp formats across files
+- Verify data collection period overlap between devices
+- Check for missing or corrupted data in input files
 
-2. Memory Issues
-   - Try Approach 2 for large datasets
-   - Close other memory-intensive applications
+### Visualization
+- Large files may require more memory
+- Adjust time window for smoother performance
+- Use channel selection to focus on relevant data
 
-3. Data Alignment
-   - Verify devices were time-synchronized during data collection
-   - Check label timestamps fall within data collection period
+## Support
 
-## Need Help?
-
-For issues or questions:
-- Check the performance.log file for error details
-- Include error messages when requesting support
-- Specify which approach you're using
+For technical issues:
+- Check the performance_metrics.txt file
+- Review console output for error messages
+- Include sample data when reporting problems
