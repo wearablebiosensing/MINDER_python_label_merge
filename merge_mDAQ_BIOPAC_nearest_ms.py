@@ -493,7 +493,7 @@ def process_mdaq(mdaq_folder: str, start_time_ms: int) -> Tuple[Dict[int, List[s
                             # EDA calculation: Resistance = 335544320 / raw_value
                             eda_raw_str = row[1]
                             eda_raw = float(eda_raw_str)
-                            eda = str(335544320 / eda_raw) if eda_raw != 0 else 'Infinity'
+                            eda = str(eda_raw_str) #str(335544320 / eda_raw) if eda_raw != 0 else 'Infinity'
                         except (ValueError, IndexError) as e:
                             logging.warning(f"Skipping row {row_idx + 2} in {filename}: Error processing ECG/EDA raw value '{row[1]}'. Error: {e}. Row: {row}")
                             skipped_count += 1
