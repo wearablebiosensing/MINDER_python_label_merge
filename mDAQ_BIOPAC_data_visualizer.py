@@ -1,3 +1,15 @@
+"""
+Physiological Data Viewer - An application for visualizing and comparing physiological data
+from different data acquisition systems (mDAQ and BIOPAC).
+
+Features:
+- Load and view CSV files from mDAQ and BIOPAC systems
+- Display multiple channels (ECG, EDA, PPG/IR) simultaneously
+- Customizable visualization options (colors, labels, time windows)
+- Label annotations with customizable appearance
+- Synchronized time axis across all plots
+"""
+
 import sys
 import pandas as pd
 import numpy as np
@@ -5,12 +17,21 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                            QHBoxLayout, QPushButton, QFileDialog, QLabel, 
                            QGroupBox, QCheckBox, QSpinBox, QScrollArea,
                            QColorDialog, QComboBox)
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QColor
 import pyqtgraph as pg
 
 class TimeSeriesViewer(QMainWindow):
+    """
+    A PyQt5-based application for visualizing and comparing physiological data.
+    
+    This viewer allows for loading and display of time series data from mDAQ
+    and BIOPAC systems, with support for multiple channels and customizable
+    visualization options.
+    """
+    
     def __init__(self):
+        """Initialize the TimeSeriesViewer application."""
         super().__init__()
         self.setWindowTitle('Physiological Data Viewer')
         self.setGeometry(100, 100, 1400, 900)
@@ -30,7 +51,7 @@ class TimeSeriesViewer(QMainWindow):
         }
         self.background_color = 'k'
         self.grid_color = '#2C2C2C'
-        self.text_color = 'w'
+        self.text_color = 'w'  # Default text color for axes and titles
         self.label_colors = {
             'line': '#FF0000',
             'text': '#FF0000',
@@ -48,10 +69,23 @@ class TimeSeriesViewer(QMainWindow):
             'marker_symbol': 't'  # 't', 'o', 's', 'd', '+'
         }
         
+        # Setup a timer for delayed label updates to prevent performance issues
+        # during continuous zooming or panning
+        self.label_update_timer = QTimer()
+        self.label_update_timer.setSingleShot(True)
+        self.label_update_timer.timeout.connect(self.update_all_labels_delayed)
+        self.current_view_changed = None
+        
         # Setup UI
         self.setup_ui()
 
     def add_label_controls(self, layout):
+        """
+        Add controls for customizing label appearance.
+        
+        Args:
+            layout: The parent layout to add controls to
+        """
         label_group = QGroupBox("Label Visualization")
         label_layout = QVBoxLayout()
         
@@ -81,6 +115,15 @@ class TimeSeriesViewer(QMainWindow):
         line_style_layout.addWidget(QLabel("Line style:"))
         self.line_style_combo = QComboBox()
         self.line_style_combo.addItems(['Solid', 'Dashed', 'Dotted'])
+        
+        # Set the current selection based on current style
+        if self.label_settings['line_style'] == Qt.SolidLine:
+            self.line_style_combo.setCurrentText('Solid')
+        elif self.label_settings['line_style'] == Qt.DashLine:
+            self.line_style_combo.setCurrentText('Dashed')
+        else:
+            self.line_style_combo.setCurrentText('Dotted')
+            
         self.line_style_combo.currentTextChanged.connect(self.update_line_style)
         line_style_layout.addWidget(self.line_style_combo)
         label_layout.addLayout(line_style_layout)
@@ -90,6 +133,12 @@ class TimeSeriesViewer(QMainWindow):
         marker_layout.addWidget(QLabel("Marker:"))
         self.marker_combo = QComboBox()
         self.marker_combo.addItems(['triangle', 'circle', 'square', 'diamond', 'plus'])
+        
+        # Set the current selection based on current symbol
+        symbol_to_text = {'t': 'triangle', 'o': 'circle', 's': 'square', 'd': 'diamond', '+': 'plus'}
+        current_symbol_text = symbol_to_text.get(self.label_settings['marker_symbol'], 'triangle')
+        self.marker_combo.setCurrentText(current_symbol_text)
+        
         self.marker_combo.currentTextChanged.connect(self.update_marker_style)
         marker_layout.addWidget(self.marker_combo)
         
@@ -100,11 +149,36 @@ class TimeSeriesViewer(QMainWindow):
         marker_layout.addWidget(self.marker_size_spin)
         label_layout.addLayout(marker_layout)
         
+        # Add "Reset Labels" button
+        self.reset_labels_btn = QPushButton("Reset Label Positions")
+        self.reset_labels_btn.clicked.connect(self.reset_label_positions)
+        label_layout.addWidget(self.reset_labels_btn)
+        
         label_group.setLayout(label_layout)
         layout.addWidget(label_group)
-
         
+    def reset_label_positions(self):
+        """
+        Manually reset all label positions based on current viewport.
+        This function forces a redraw of all labels using the current view settings.
+        """
+        # Force redraw of all labels for all plots
+        if self.mdaq_data is not None and 'label' in self.mdaq_data['data'].columns:
+            # Clear and replot mDAQ labels
+            for key in self.plots:
+                if key.startswith('mdaq'):
+                    self.clear_label_items(key)
+                    self.plot_labels_for_plot(self.mdaq_data['data'], self.mdaq_data['time'], 'mdaq', key)
+                    
+        if self.biopac_data is not None and 'label' in self.biopac_data['data'].columns:
+            # Clear and replot BIOPAC labels
+            for key in self.plots:
+                if key.startswith('biopac'):
+                    self.clear_label_items(key)
+                    self.plot_labels_for_plot(self.biopac_data['data'], self.biopac_data['time'], 'biopac', key)
+
     def setup_ui(self):
+        """Set up the main user interface components."""
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QHBoxLayout(central_widget)
@@ -129,6 +203,12 @@ class TimeSeriesViewer(QMainWindow):
         self.setup_plots()
         
     def create_control_panel(self):
+        """
+        Create the control panel widget with all settings controls.
+        
+        Returns:
+            QWidget: The control panel widget
+        """
         control_panel = QWidget()
         layout = QVBoxLayout(control_panel)
         
@@ -222,6 +302,17 @@ class TimeSeriesViewer(QMainWindow):
         return control_panel
     
     def create_color_picker(self, label_text, initial_color, callback):
+        """
+        Create a color picker layout with label and button.
+        
+        Args:
+            label_text: Text for the label
+            initial_color: Initial color for the button
+            callback: Function to call when color is chosen
+            
+        Returns:
+            QHBoxLayout: Layout containing the label and color button
+        """
         layout = QHBoxLayout()
         layout.addWidget(QLabel(label_text))
         color_btn = QPushButton()
@@ -231,11 +322,13 @@ class TimeSeriesViewer(QMainWindow):
         layout.addWidget(color_btn)
         return layout
 
-
-
-    
     def add_color_controls(self, layout):
-        """Add color control widgets with improved initialization"""
+        """
+        Add color control widgets to the given layout.
+        
+        Args:
+            layout: The parent layout to add controls to
+        """
         color_group = QGroupBox("Color Settings")
         color_layout = QVBoxLayout()
         
@@ -261,6 +354,16 @@ class TimeSeriesViewer(QMainWindow):
         self.grid_color_btn.clicked.connect(self.change_grid_color)
         grid_layout.addWidget(self.grid_color_btn)
         color_layout.addLayout(grid_layout)
+        
+        # Text color - NEW
+        text_layout = QHBoxLayout()
+        text_layout.addWidget(QLabel("Text:"))
+        self.text_color_btn = QPushButton()
+        self.text_color_btn.setFixedSize(50, 20)
+        self.text_color_btn.setStyleSheet(f"background-color: {self.text_color}")
+        self.text_color_btn.clicked.connect(self.change_text_color)
+        text_layout.addWidget(self.text_color_btn)
+        color_layout.addLayout(text_layout)
         
         # Channel colors
         channel_group = QGroupBox("Channel Colors")
@@ -314,9 +417,11 @@ class TimeSeriesViewer(QMainWindow):
         color_group.setLayout(color_layout)
         layout.addWidget(color_group)
 
-
-    
     def setup_plots(self):
+        """
+        Initialize and configure all plots for the application.
+        Sets up plot structure, legend, grid, and links X axes.
+        """
         self.plots = {}
         self.plot_items = {}
         self.text_items = {}
@@ -342,6 +447,14 @@ class TimeSeriesViewer(QMainWindow):
                         self.plots[f'biopac_{biopac_channel}']]:
                 plot.showGrid(x=True, y=True)
                 plot.addLegend()
+                
+                # Set text colors
+                plot.getAxis('bottom').setTextPen(self.text_color)
+                plot.getAxis('left').setTextPen(self.text_color)
+                plot.setTitle(plot.titleLabel.text, color=self.text_color)
+                
+                # Connect view changed signal to update label positions
+                plot.sigRangeChanged.connect(self.on_view_changed)
         
         # Link all x-axes to the first plot
         first_plot = list(self.plots.values())[0]
@@ -349,7 +462,68 @@ class TimeSeriesViewer(QMainWindow):
             if plot != first_plot:
                 plot.setXLink(first_plot)
     
+    def on_view_changed(self, view):
+        """
+        Handler for when the plot view changes (zoom, pan, etc.)
+        Schedules an update of label positions after a short delay to prevent
+        performance issues during continuous zooming/panning.
+        
+        Args:
+            view: The view widget that changed
+        """
+        # Store the view that changed
+        self.current_view_changed = view
+        
+        # Restart the timer - this prevents excessive updates during rapid interactions
+        self.label_update_timer.start(100)  # 100ms delay
+        
+    def update_all_labels_delayed(self):
+        """
+        Updates all label positions after view changes, with debouncing to
+        prevent performance issues during continuous zooming/panning.
+        """
+        if self.current_view_changed is None:
+            return
+            
+        view = self.current_view_changed
+        
+        # Get the plot that changed
+        for key, plot in self.plots.items():
+            if plot == view:
+                # Check if this plot has label data stored
+                if hasattr(plot, 'plot_label_data'):
+                    # Retrieve the stored data
+                    plot_data = plot.plot_label_data
+                    
+                    # Update the label positions based on the new view
+                    if 'device_type' in plot_data:
+                        # Clear existing labels
+                        self.clear_label_items(key)
+                        
+                        # Get current plot data from the appropriate source
+                        if plot_data['device_type'] == 'mdaq' and self.mdaq_data is not None:
+                            data = self.mdaq_data['data']
+                            time = self.mdaq_data['time']
+                        elif plot_data['device_type'] == 'biopac' and self.biopac_data is not None:
+                            data = self.biopac_data['data']
+                            time = self.biopac_data['time']
+                        else:
+                            continue
+                        
+                        # Re-draw the labels with updated positions
+                        if 'label' in data.columns:
+                            self.plot_labels_for_plot(data, time, plot_data['device_type'], key)
+                            
+        # Reset the current view changed
+        self.current_view_changed = None
+                    
     def load_file(self, device_type):
+        """
+        Load a CSV file for the specified device type.
+        
+        Args:
+            device_type: Type of device ('mdaq' or 'biopac')
+        """
         filename, _ = QFileDialog.getOpenFileName(self, f'Select {device_type.upper()} File',
             '', 'CSV Files (*.csv)')
         
@@ -380,6 +554,12 @@ class TimeSeriesViewer(QMainWindow):
                 print(f"Error loading file: {e}")
     
     def clear_plot_items(self, device_type):
+        """
+        Clear all plotted items for the specified device type.
+        
+        Args:
+            device_type: Type of device ('mdaq' or 'biopac')
+        """
         # Clear plots for the specified device
         for key, plot in self.plots.items():
             if key.startswith(device_type):
@@ -396,6 +576,7 @@ class TimeSeriesViewer(QMainWindow):
                 self.event_lines[key] = []
     
     def plot_mdaq_data(self):
+        """Plot mDAQ data if available."""
         if self.mdaq_data is None:
             return
             
@@ -411,6 +592,7 @@ class TimeSeriesViewer(QMainWindow):
                     time, df[col], pen=color, name=col.upper())
     
     def plot_biopac_data(self):
+        """Plot BIOPAC data if available."""
         if self.biopac_data is None:
             return
             
@@ -426,71 +608,113 @@ class TimeSeriesViewer(QMainWindow):
                     time, df[col], pen=color, name=channel)
     
     def plot_labels(self, df, time, device_type):
-        """Plot labels with improved visibility"""
+        """
+        Plot labels for all plots of the specified device type.
+        
+        Args:
+            df: DataFrame containing the data
+            time: Time array corresponding to the data
+            device_type: Type of device ('mdaq' or 'biopac')
+        """
+        # Plot labels on each applicable plot
+        for key, plot in self.plots.items():
+            if key.startswith(device_type):
+                self.plot_labels_for_plot(df, time, device_type, key)
+    
+    def plot_labels_for_plot(self, df, time, device_type, plot_key):
+        """
+        Plot labels for a specific plot.
+        
+        Args:
+            df: DataFrame containing the data
+            time: Time array corresponding to the data
+            device_type: Type of device ('mdaq' or 'biopac')
+            plot_key: Key of the specific plot
+        """
+        # Get label points
         label_points = df[df['label'].notna()]
         if not label_points.empty:
             label_time = time[label_points.index]
             label_values = label_points['label']
             
-            # Add label markers and text to relevant plots
-            for key, plot in self.plots.items():
-                if key.startswith(device_type):
-                    # Clear existing items
-                    self.clear_label_items(key)
+            plot = self.plots[plot_key]
+            # Clear existing items
+            self.clear_label_items(plot_key)
+            
+            # Get current plot range for positioning
+            view_range = plot.viewRange()
+            y_min, y_max = view_range[1]
+            y_range = y_max - y_min
+            
+            # Store data for this plot to enable update on viewport changes
+            plot_data = {
+                'label_time': label_time,
+                'label_values': label_values,
+                'device_type': device_type
+            }
+            # Store this data as an attribute of the plot for later use
+            plot.plot_label_data = plot_data
+            
+            # Add vertical lines
+            if self.label_settings['show_lines']:
+                for t in label_time:
+                    line = pg.InfiniteLine(
+                        pos=t, 
+                        angle=90, 
+                        pen=pg.mkPen(color=self.label_colors['line'], 
+                                   width=1, 
+                                   style=self.label_settings['line_style'])
+                    )
+                    plot.addItem(line)
+                    self.event_lines[plot_key].append(line)
+            
+            # Add text labels
+            if self.label_settings['show_text']:
+                for t, label in zip(label_time, label_values):
+                    # Process label - remove everything after '@' character
+                    processed_label = str(label)
+                    if '@' in processed_label:
+                        processed_label = processed_label.split('@')[0]
                     
-                    # Get plot range for positioning
-                    view_range = plot.viewRange()
-                    y_min, y_max = view_range[1]
-                    y_range = y_max - y_min
+                    # Position text based on settings
+                    if self.label_settings['text_position'] == 'top':
+                        y_pos = y_max - (0.1 * y_range)
+                    elif self.label_settings['text_position'] == 'bottom':
+                        y_pos = y_min + (0.1 * y_range)
+                    else:  # middle
+                        y_pos = y_min + (0.5 * y_range)
                     
-                    # Add vertical lines
-                    if self.label_settings['show_lines']:
-                        for t in label_time:
-                            line = pg.InfiniteLine(
-                                pos=t, 
-                                angle=90, 
-                                pen=pg.mkPen(color=self.label_colors['line'], 
-                                           width=1, 
-                                           style=self.label_settings['line_style'])
-                            )
-                            plot.addItem(line)
-                            self.event_lines[key].append(line)
-                    
-                    # Add text labels
-                    if self.label_settings['show_text']:
-                        for t, label in zip(label_time, label_values):
-                            # Position text based on settings
-                            if self.label_settings['text_position'] == 'top':
-                                y_pos = y_max - (0.1 * y_range)
-                            elif self.label_settings['text_position'] == 'bottom':
-                                y_pos = y_min + (0.1 * y_range)
-                            else:  # middle
-                                y_pos = y_min + (0.5 * y_range)
-                            
-                            text = pg.TextItem(
-                                text=str(label),
-                                color=self.label_colors['text'],
-                                anchor=(0.5, 0.5)
-                            )
-                            plot.addItem(text)
-                            text.setPos(t, y_pos)
-                            self.text_items[key].append(text)
-                    
-                    # Add markers
-                    if self.label_settings['show_markers']:
-                        marker_pos = y_min + (0.05 * y_range)
-                        plot.plot(
-                            label_time,
-                            np.zeros_like(label_time) + marker_pos,
-                            pen=None,
-                            symbol=self.label_settings['marker_symbol'],
-                            symbolBrush=self.label_colors['marker'],
-                            symbolPen=None,
-                            symbolSize=self.label_settings['marker_size']
-                        )
+                    text = pg.TextItem(
+                        text=processed_label,
+                        color=self.label_colors['text'],
+                        anchor=(0.5, 0.5)
+                    )
+                    plot.addItem(text)
+                    text.setPos(t, y_pos)
+                    self.text_items[plot_key].append(text)
+            
+            # Add markers
+            if self.label_settings['show_markers']:
+                marker_pos = y_min + (0.05 * y_range)
+                scatter = plot.plot(
+                    label_time,
+                    np.zeros_like(label_time) + marker_pos,
+                    pen=None,
+                    symbol=self.label_settings['marker_symbol'],
+                    symbolBrush=self.label_colors['marker'],
+                    symbolPen=None,
+                    symbolSize=self.label_settings['marker_size']
+                )
+                # Store reference to scatter plot to remove later
+                self.event_lines[plot_key].append(scatter)
 
     def clear_label_items(self, key):
-        """Clear all label-related items for a specific plot"""
+        """
+        Clear all label-related items for a specific plot.
+        
+        Args:
+            key: Key of the plot to clear items for
+        """
         plot = self.plots[key]
         
         # Clear text items
@@ -498,35 +722,34 @@ class TimeSeriesViewer(QMainWindow):
             plot.removeItem(text)
         self.text_items[key] = []
         
-        # Clear event lines
-        for line in self.event_lines[key]:
-            plot.removeItem(line)
+        # Clear event lines and markers
+        for item in self.event_lines[key]:
+            plot.removeItem(item)
         self.event_lines[key] = []
 
-    def position_label_text(self, text_item, x_pos, plot):
-        view_range = plot.viewRange()
-        y_min, y_max = view_range[1]
-        y_range = y_max - y_min
-        
-        if self.label_settings['text_position'] == 'top':
-            y_pos = y_max - (0.05 * y_range)
-        elif self.label_settings['text_position'] == 'bottom':
-            y_pos = y_min + (0.05 * y_range)
-        else:  # middle
-            y_pos = y_min + (0.5 * y_range)
-            
-        text_item.setPos(x_pos, y_pos)
-
     def update_label_visibility(self):
+        """Update label visibility based on checkbox settings."""
         for key, value in self.label_checkboxes.items():
             self.label_settings[key] = value.isChecked()
         self.replot_all_labels()
 
     def update_label_position(self, position):
+        """
+        Update the position of all label text.
+        
+        Args:
+            position: New position setting ('top', 'middle', or 'bottom')
+        """
         self.label_settings['text_position'] = position
         self.replot_all_labels()
 
     def update_line_style(self, style):
+        """
+        Update the style of label lines.
+        
+        Args:
+            style: New line style ('Solid', 'Dashed', or 'Dotted')
+        """
         style_map = {
             'Solid': Qt.SolidLine,
             'Dashed': Qt.DashLine,
@@ -536,6 +759,12 @@ class TimeSeriesViewer(QMainWindow):
         self.replot_all_labels()
 
     def update_marker_style(self, style):
+        """
+        Update the style of label markers.
+        
+        Args:
+            style: New marker style
+        """
         style_map = {
             'triangle': 't',
             'circle': 'o',
@@ -547,35 +776,70 @@ class TimeSeriesViewer(QMainWindow):
         self.replot_all_labels()
 
     def update_marker_size(self, size):
+        """
+        Update the size of label markers.
+        
+        Args:
+            size: New marker size
+        """
         self.label_settings['marker_size'] = size
         self.replot_all_labels()
 
     def replot_all_labels(self):
-        if self.mdaq_data is not None:
+        """Replot all labels with current settings."""
+        if self.mdaq_data is not None and 'label' in self.mdaq_data['data'].columns:
             self.plot_labels(self.mdaq_data['data'], self.mdaq_data['time'], 'mdaq')
-        if self.biopac_data is not None:
+        if self.biopac_data is not None and 'label' in self.biopac_data['data'].columns:
             self.plot_labels(self.biopac_data['data'], self.biopac_data['time'], 'biopac')
-
+    
     def change_grid_color(self):
+        """
+        Change the grid color for all plots using a color dialog.
+        Updates the stored color and applies it to all plots.
+        """
         color = QColorDialog.getColor()
         if color.isValid():
             self.grid_color = color.name()
+            self.grid_color_btn.setStyleSheet(f"background-color: {self.grid_color}")
+            
             for plot in self.plots.values():
+                # Update grid lines
                 plot.getAxis('bottom').setPen(self.grid_color)
                 plot.getAxis('left').setPen(self.grid_color)
                 plot.showGrid(x=True, y=True, alpha=0.3)
-
+    
     def change_text_color(self):
+        """
+        Change the text color for all plots using a color dialog.
+        Updates text color for axes labels, titles, and legend.
+        """
         color = QColorDialog.getColor()
         if color.isValid():
             self.text_color = color.name()
+            self.text_color_btn.setStyleSheet(f"background-color: {self.text_color}")
+            
             for plot in self.plots.values():
+                # Update text color for axes
                 plot.getAxis('bottom').setTextPen(self.text_color)
                 plot.getAxis('left').setTextPen(self.text_color)
-                plot.setTitle(plot.titleLabel.text, color=self.text_color)
-
+                
+                # Update title color
+                title_text = plot.titleLabel.text
+                plot.setTitle(title_text, color=self.text_color)
+                
+                # Update legend text color if possible
+                if hasattr(plot, 'legend') and plot.legend is not None:
+                    for item in plot.legend.items:
+                        if hasattr(item[1], 'setText'):
+                            item[1].setText(item[1].text, color=self.text_color)
+    
     def change_label_color(self, item):
-        """Update label color with button update"""
+        """
+        Change color for label elements (lines, text, or markers).
+        
+        Args:
+            item: Type of label element to change color for
+        """
         color = QColorDialog.getColor()
         if color.isValid():
             self.label_colors[item] = color.name()
@@ -584,11 +848,11 @@ class TimeSeriesViewer(QMainWindow):
             if btn_key in self.color_buttons:
                 self.color_buttons[btn_key].setStyleSheet(f"background-color: {color.name()}")
             self.replot_all_labels()
-
-
-
     
     def update_plot_visibility(self):
+        """
+        Update the visibility of plots based on channel checkbox states.
+        """
         # Update mDAQ plot visibility
         for channel, checkbox in self.mdaq_channels.items():
             if f'mdaq_{channel}' in self.plots:
@@ -600,15 +864,31 @@ class TimeSeriesViewer(QMainWindow):
                 self.plots[f'biopac_{channel}'].setVisible(checkbox.isChecked())
     
     def toggle_auto_scale(self, state):
+        """
+        Toggle automatic scaling of the Y-axis.
+        
+        Args:
+            state: Checkbox state (True for auto-scale, False for fixed scale)
+        """
         for plot in self.plots.values():
             plot.enableAutoRange('y' if state else None)
     
     def update_time_window(self, value):
+        """
+        Update the visible time window for all plots.
+        
+        Args:
+            value: Time window in seconds
+        """
         if len(self.plots) > 0:
             first_plot = list(self.plots.values())[0]
             first_plot.setXRange(-value, 0, padding=0)
     
     def change_background_color(self):
+        """
+        Change the background color for all plots using a color dialog.
+        Updates the stored color and applies it to the plot widget.
+        """
         color = QColorDialog.getColor()
         if color.isValid():
             self.background_color = color.name()
@@ -616,7 +896,13 @@ class TimeSeriesViewer(QMainWindow):
             self.plot_widget.setBackground(self.background_color)
     
     def change_channel_color(self, device, channel):
-        """Update channel color with button update"""
+        """
+        Change color for a specific channel in a specific device.
+        
+        Args:
+            device: Device type ('mdaq' or 'biopac')
+            channel: Channel name
+        """
         color = QColorDialog.getColor()
         if color.isValid():
             self.channel_colors[device][channel] = color.name()
